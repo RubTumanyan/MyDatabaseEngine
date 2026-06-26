@@ -51,4 +51,4 @@ TEST(LexerTest, LineComment) {
 TEST(LexerTest, UnterminatedStringThrows) {
     Lexer lexer("SELECT 'unterminated");
     EXPECT_THROW(lexer.tokenize(), std::runtime_error);
-}
+}// placeholder

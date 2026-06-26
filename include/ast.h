@@ -18,7 +18,7 @@ struct LiteralExpr;
 struct ColumnRefExpr;
 
 // A value in the AST is one of these four types
-using Expr = std::variant
+using Expr = std::variant<
     std::shared_ptr<LiteralExpr>,
     std::shared_ptr<ColumnRefExpr>,
     std::shared_ptr<BinaryExpr>,
@@ -114,7 +114,7 @@ struct DropTableStatement {
 };
 
 // Any statement is one of these
-using Statement = std::variant
+using Statement = std::variant<
     SelectStatement,
     InsertStatement,
     UpdateStatement,
