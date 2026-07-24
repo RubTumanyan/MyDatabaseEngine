@@ -37,7 +37,10 @@ add_library(mydb_engine
 target_include_directories(mydb_engine PUBLIC include)
 
 # ── Main executable ─────────────────────────────────────────
-add_executable(mydb main.cpp)
+add_executable(mydb main.cpp
+        include/row.h
+        include/projection.h
+        include/limit.h)
 target_link_libraries(mydb PRIVATE mydb_engine)
 
 # ── Tests ────────────────────────────────────────────────────
