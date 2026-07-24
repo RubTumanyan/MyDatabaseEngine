@@ -1,87 +1,65 @@
-#pragam once
+#pragma once
 #include "ast.h"
 #include <string>
 #include <vector>
 #include <memory>
-#include <optional>
 
 namespace mydb {
 
-// ─────────────────────────────────────────────────────────────────
-// Logical Plan Node types
-// Каждый узел = одна реляционная операция
-// ─────────────────────────────────────────────────────────────────
+    // Logical plan represents WHAT to do — not HOW.
+    // Each node is one relational algebra operation.
+    // The tree is built bottom-up: Scan → Filter → Projection → Sort → Limit
+    enum class LogicalNodeType {
+        Scan,
+        Filter,
+        Projection,
+        Sort,
+        Limit,
+        Join
+    };
 
-enum class LogicalNodeType {
-    Scan,        // читаем таблицу целиком
-    Filter,      // фильтруем строки по условию WHERE
-    Projection,  // выбираем только нужные колонки
-    Sort,        // сортировка ORDER BY
-    Limit,       // ограничение LIMIT
-    Join         // соединение двух таблиц
-};
+    struct LogicalNode {
+        LogicalNodeType                           type;
+        std::vector<std::shared_ptr<LogicalNode>> children;
 
-// Базовый класс для всех узлов логического плана
-struct LogicalNode {
-    LogicalNodeType              type;
-    std::vector<std::shared_ptr<LogicalNode>> children; // дочерние узлы
+        explicit LogicalNode(LogicalNodeType t) : type(t) {}
+        virtual ~LogicalNode() = default;
+    };
 
-    explicit LogicalNode(LogicalNodeType t) : type(t) {}
-    virtual ~LogicalNode() = default;
-};
+    // Always the bottom of the tree — reads every row from a table
+    struct LogicalScan : LogicalNode {
+        std::string tableName;
+        explicit LogicalScan(const std::string& table)
+            : LogicalNode(LogicalNodeType::Scan), tableName(table) {}
+    };
 
-// ── Scan ─────────────────────────────────────────────────────────
-// Читаем все строки из таблицы
-// SELECT * FROM users  →  Scan("users")
-struct LogicalScan : LogicalNode {
-    std::string tableName;
+    // Keeps only rows that satisfy the predicate
+    struct LogicalFilter : LogicalNode {
+        Expr predicate;
+        explicit LogicalFilter(Expr pred)
+            : LogicalNode(LogicalNodeType::Filter), predicate(std::move(pred)) {}
+    };
 
-    explicit LogicalScan(const std::string& table)
-        : LogicalNode(LogicalNodeType::Scan), tableName(table) {}
-};
+    // Drops columns the user didn't ask for
+    struct LogicalProjection : LogicalNode {
+        std::vector<std::string> columns;
+        explicit LogicalProjection(std::vector<std::string> cols)
+            : LogicalNode(LogicalNodeType::Projection), columns(std::move(cols)) {}
+    };
 
-// ── Filter ───────────────────────────────────────────────────────
-// Фильтруем строки по условию
-// WHERE age >= 30  →  Filter(age >= 30)
-struct LogicalFilter : LogicalNode {
-    Expr predicate; // условие из WHERE
+    struct LogicalSort : LogicalNode {
+        std::vector<OrderByClause> orderBy;
+        explicit LogicalSort(std::vector<OrderByClause> order)
+            : LogicalNode(LogicalNodeType::Sort), orderBy(std::move(order)) {}
+    };
 
-    explicit LogicalFilter(Expr pred)
-        : LogicalNode(LogicalNodeType::Filter)
-        , predicate(std::move(pred)) {}
-};
+    // Stops pulling rows once count is reached — avoids scanning the whole table
+    struct LogicalLimit : LogicalNode {
+        int count;
+        explicit LogicalLimit(int n)
+            : LogicalNode(LogicalNodeType::Limit), count(n) {}
+    };
 
-// ── Projection ───────────────────────────────────────────────────
-// Выбираем только нужные колонки
-// SELECT id, name  →  Projection([id, name])
-struct LogicalProjection : LogicalNode {
-    std::vector<std::string> columns; // ["id", "name"] или ["*"]
-
-    explicit LogicalProjection(std::vector<std::string> cols)
-        : LogicalNode(LogicalNodeType::Projection)
-        , columns(std::move(cols)) {}
-};
-
-// ── Sort ─────────────────────────────────────────────────────────
-// ORDER BY name ASC
-struct LogicalSort : LogicalNode {
-    std::vector<OrderByClause> orderBy;
-
-    explicit LogicalSort(std::vector<OrderByClause> order)
-        : LogicalNode(LogicalNodeType::Sort)
-        , orderBy(std::move(order)) {}
-};
-
-// ── Limit ────────────────────────────────────────────────────────
-// LIMIT 10
-struct LogicalLimit : LogicalNode {
-    int count;
-
-    explicit LogicalLimit(int n)
-        : LogicalNode(LogicalNodeType::Limit), count(n) {}
-};
-
-// Удобный псевдоним
-using LogicalPlanRef = std::shared_ptr<LogicalNode>;
+    using LogicalPlanRef = std::shared_ptr<LogicalNode>;
 
 } // namespace mydb

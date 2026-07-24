@@ -1,61 +1,60 @@
 #include <iostream>
-#include "include/lexer.h"
-#include "include/parser.h"
-#include "include/ast.h"
+#include "lexer.h"
+#include "parser.h"
+#include "optimizer.h"
 
-// НЕ пишем using namespace mydb здесь — конфликтует с std::variant
+// Prints the physical plan tree with indentation
+void printPlan(const mydb::PhysicalPlanRef& node, int depth = 0) {
+    if (!node) return;
+    std::string pad(depth * 2, ' ');
 
-void printExpr(const mydb::Expr& expr, int indent = 0) {
-    std::string pad(indent * 2, ' ');
+    switch (node->type) {
+    case mydb::PhysicalNodeType::SeqScan: {
+        auto* n = static_cast<mydb::PhysicalSeqScan*>(node.get());
+        std::cout << pad << "SeqScan(" << n->tableName << ")\n";
+        break;
+    }
+    case mydb::PhysicalNodeType::Filter:
+        std::cout << pad << "Filter(WHERE ...)\n";
+        break;
+    case mydb::PhysicalNodeType::Projection: {
+        auto* n = static_cast<mydb::PhysicalProjection*>(node.get());
+        std::cout << pad << "Projection(";
+        for (auto& c : n->columns) std::cout << c << " ";
+        std::cout << ")\n";
+        break;
+    }
+    case mydb::PhysicalNodeType::Sort:
+        std::cout << pad << "Sort(ORDER BY ...)\n";
+        break;
+    case mydb::PhysicalNodeType::Limit: {
+        auto* n = static_cast<mydb::PhysicalLimit*>(node.get());
+        std::cout << pad << "Limit(" << n->count << ")\n";
+        break;
+    }
+    default: break;
+    }
 
-    std::visit([&](auto&& e) {
-        using T = std::decay_t<decltype(e)>;
-
-        if constexpr (std::is_same_v<T, std::shared_ptr<mydb::LiteralExpr>>) {
-            std::cout << pad << "Literal(" << e->value << ")\n";
-
-        } else if constexpr (std::is_same_v<T, std::shared_ptr<mydb::ColumnRefExpr>>) {
-            std::cout << pad << "Column(" << e->column << ")\n";
-
-        } else if constexpr (std::is_same_v<T, std::shared_ptr<mydb::BinaryExpr>>) {
-            std::cout << pad << "BinaryExpr(" << e->op << ")\n";
-            printExpr(e->left,  indent + 1);
-            printExpr(e->right, indent + 1);
-
-        } else if constexpr (std::is_same_v<T, std::shared_ptr<mydb::UnaryExpr>>) {
-            std::cout << pad << "UnaryExpr(" << e->op << ")\n";
-            printExpr(e->operand, indent + 1);
-        }
-
-    }, expr);
+    for (auto& child : node->children)
+        printPlan(child, depth + 1);
 }
 
 int main() {
     std::string sql =
-        "SELECT id, name FROM users WHERE age >= 30 AND name != 'Bob' LIMIT 10;";
+        "SELECT id, name FROM users WHERE age >= 30 ORDER BY name ASC LIMIT 10;";
 
     std::cout << "SQL: " << sql << "\n\n";
 
-    mydb::Lexer  lexer(sql);
-    mydb::Parser parser(lexer.tokenize());
-    auto         stmt = parser.parse();
+    mydb::Lexer     lexer(sql);
+    mydb::Parser    parser(lexer.tokenize());
+    mydb::Optimizer optimizer;
 
-    auto& sel = std::get<mydb::SelectStatement>(stmt);
+    auto stmt     = parser.parse();
+    auto logical  = optimizer.toLogical(stmt);
+    auto physical = optimizer.toPhysical(logical);
 
-    std::cout << "Statement : SELECT\n";
-    std::cout << "Table     : " << sel.table << "\n";
-
-    std::cout << "Columns   : ";
-    for (auto& c : sel.columns) std::cout << c << " ";
-    std::cout << "\n";
-
-    if (sel.limit)
-        std::cout << "Limit     : " << *sel.limit << "\n";
-
-    if (sel.where) {
-        std::cout << "\nWHERE AST:\n";
-        printExpr(*sel.where, 1);
-    }
+    std::cout << "Physical Plan:\n";
+    printPlan(physical);
 
     return 0;
 }
