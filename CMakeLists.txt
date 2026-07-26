@@ -40,7 +40,8 @@ target_include_directories(mydb_engine PUBLIC include)
 add_executable(mydb main.cpp
         include/row.h
         include/projection.h
-        include/limit.h)
+        include/limit.h
+        include/txn_manager.h)
 target_link_libraries(mydb PRIVATE mydb_engine)
 
 # ── Tests ────────────────────────────────────────────────────
