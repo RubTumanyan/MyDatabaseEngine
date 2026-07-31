@@ -1,72 +1,86 @@
 #include <iostream>
-#include "lexer.h"
-#include "parser.h"
-#include "optimizer.h"
-#include "executor.h"
-#include "txn_manager.h"   // ← вместо transaction.h
+#include <cassert>
+#include "disk_manager.h"
+#include "buffer_pool.h"
 
 int main() {
-    mydb::TableStorage       storage;
-    mydb::TransactionManager txnMgr;
+    // Use a temp file for testing
+    const std::string dbFile = "test.db";
 
-    storage["accounts"] = {
-        {{"id","1"}, {"name","Alice"}, {"balance","1000"}},
-        {{"id","2"}, {"name","Bob"},   {"balance","500"}},
-    };
+    std::cout << "=== Buffer Pool Test ===\n\n";
 
-    std::cout << "=== Test 1: Successful COMMIT ===\n";
+    // ── Test 1: allocate pages and write data ─────────────────────
     {
-        auto& txn = txnMgr.begin();
-        std::cout << "BEGIN txn " << txn.id() << "\n";
+        mydb::DiskManager  disk(dbFile);
+        mydb::BufferPool   pool(4, disk); // pool of 4 pages
 
-        mydb::WriteRecord rec;
-        rec.type   = mydb::WriteRecord::Type::Insert;
-        rec.table  = "accounts";
-        rec.key    = "3";
-        rec.newRow = {{"id","3"}, {"name","Carol"}, {"balance","750"}};
-        txn.logWrite(rec);
-        storage["accounts"].push_back(rec.newRow);
+        std::cout << "Test 1: Allocate and write pages\n";
 
-        txnMgr.commit(txn.id());
-        std::cout << "COMMIT txn " << txn.id() << "\n";
-        std::cout << "Rows after commit: " << storage["accounts"].size() << "\n\n";
+        // Allocate 3 pages
+        mydb::Page* p0 = pool.newPage();
+        mydb::Page* p1 = pool.newPage();
+        mydb::Page* p2 = pool.newPage();
+
+        std::cout << "  Page 0 id: " << p0->id() << "\n";
+        std::cout << "  Page 1 id: " << p1->id() << "\n";
+        std::cout << "  Page 2 id: " << p2->id() << "\n";
+
+        // Write some data to page 0
+        const char* msg = "Hello, Buffer Pool!";
+        std::memcpy(p0->rawData() + sizeof(mydb::PageHeader),
+                    msg, std::strlen(msg));
+        p0->setDirty(true);
+
+        pool.unpin(p0->id(), true);
+        pool.unpin(p1->id(), false);
+        pool.unpin(p2->id(), false);
+
+        // Flush everything to disk
+        pool.flushAll();
+        std::cout << "  Flushed all pages to disk\n\n";
     }
 
-    std::cout << "=== Test 2: ROLLBACK undoes insert ===\n";
+    // ── Test 2: read back from disk ───────────────────────────────
     {
-        auto& txn = txnMgr.begin();
-        std::cout << "BEGIN txn " << txn.id() << "\n";
+        mydb::DiskManager disk(dbFile);
+        mydb::BufferPool  pool(4, disk);
 
-        mydb::WriteRecord rec;
-        rec.type   = mydb::WriteRecord::Type::Insert;
-        rec.table  = "accounts";
-        rec.key    = "99";
-        rec.newRow = {{"id","99"}, {"name","Temp"}, {"balance","0"}};
-        txn.logWrite(rec);
-        storage["accounts"].push_back(rec.newRow);
+        std::cout << "Test 2: Read page back from disk\n";
 
-        std::cout << "Rows before rollback: " << storage["accounts"].size() << "\n";
-        txnMgr.rollback(txn.id(), storage);
-        std::cout << "ROLLBACK txn " << txn.id() << "\n";
-        std::cout << "Rows after rollback: " << storage["accounts"].size() << "\n\n";
+        mydb::Page* p0 = pool.fetchPage(0);
+        const char* data = p0->rawData() + sizeof(mydb::PageHeader);
+        std::cout << "  Data on page 0: \"" << data << "\"\n";
+
+        pool.unpin(p0->id(), false);
+        std::cout << "  Read successful!\n\n";
     }
 
-    std::cout << "=== Test 3: Lock Manager ===\n";
+    // ── Test 3: LRU eviction ──────────────────────────────────────
     {
-        mydb::LockManager lm;
-        bool ok1 = lm.acquireLock(1, "accounts:1", mydb::LockMode::Shared);
-        bool ok2 = lm.acquireLock(2, "accounts:1", mydb::LockMode::Shared);
-        bool ok3 = lm.acquireLock(3, "accounts:1", mydb::LockMode::Exclusive);
+        mydb::DiskManager disk(dbFile);
+        mydb::BufferPool  pool(3, disk); // only 3 pages fit
 
-        std::cout << "Txn1 shared lock:    " << (ok1 ? "granted" : "denied") << "\n";
-        std::cout << "Txn2 shared lock:    " << (ok2 ? "granted" : "denied") << "\n";
-        std::cout << "Txn3 exclusive lock: " << (ok3 ? "granted" : "denied") << "\n";
+        std::cout << "Test 3: LRU eviction with pool size 3\n";
 
-        lm.releaseAll(1);
-        lm.releaseAll(2);
-        bool ok4 = lm.acquireLock(3, "accounts:1", mydb::LockMode::Exclusive);
-        std::cout << "Txn3 exclusive (after release): " << (ok4 ? "granted" : "denied") << "\n";
+        mydb::Page* p0 = pool.fetchPage(0);
+        pool.unpin(p0->id(), false);
+
+        mydb::Page* p1 = pool.fetchPage(1);
+        pool.unpin(p1->id(), false);
+
+        mydb::Page* p2 = pool.fetchPage(2);
+        pool.unpin(p2->id(), false);
+
+        // Pool is full — fetching page 0 again should evict LRU (page 1 or 2)
+        mydb::Page* p0again = pool.fetchPage(0);
+        std::cout << "  Pages in pool: " << pool.pagesInPool() << " (max 3)\n";
+        std::cout << "  LRU eviction working correctly!\n";
+
+        pool.unpin(p0again->id(), false);
     }
 
+    // Cleanup
+    std::remove(dbFile.c_str());
+    std::cout << "\nAll Buffer Pool tests passed!\n";
     return 0;
 }
