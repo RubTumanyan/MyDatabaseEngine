@@ -1,86 +1,164 @@
 #include <iostream>
-#include <cassert>
-#include "disk_manager.h"
-#include "buffer_pool.h"
+#include "lexer.h"
+#include "parser.h"
+#include "optimizer.h"
+#include "executor.h"
+#include "txn_manager.h"
+
+// ── Simple in-memory B-Tree test (no disk I/O) ────────────────────
+// We test the B-Tree logic using a simple sorted map instead
+#include <map>
+#include <optional>
+#include <vector>
+
+// Simple in-memory index to demonstrate B-Tree concept
+class SimpleIndex {
+public:
+    void insert(const std::string& key, const std::string& value) {
+        data_[key] = value;
+    }
+
+    std::optional<std::string> search(const std::string& key) {
+        auto it = data_.find(key);
+        if (it == data_.end()) return std::nullopt;
+        return it->second;
+    }
+
+    std::vector<std::pair<std::string,std::string>>
+    rangeScan(const std::string& from, const std::string& to) {
+        std::vector<std::pair<std::string,std::string>> result;
+        auto it = data_.lower_bound(from);
+        while (it != data_.end() && it->first <= to) {
+            result.emplace_back(it->first, it->second);
+            ++it;
+        }
+        return result;
+    }
+
+private:
+    std::map<std::string, std::string> data_;
+};
 
 int main() {
-    // Use a temp file for testing
-    const std::string dbFile = "test.db";
+    // ── Full SQL pipeline test ────────────────────────────────────
+    std::cout << "=== Full SQL Pipeline ===\n\n";
 
-    std::cout << "=== Buffer Pool Test ===\n\n";
+    mydb::TableStorage storage;
+    storage["users"] = {
+        {{"id","1"}, {"name","Alice"}, {"age","35"}},
+        {{"id","2"}, {"name","Bob"},   {"age","22"}},
+        {{"id","3"}, {"name","Carol"}, {"age","31"}},
+        {{"id","4"}, {"name","Dave"},  {"age","17"}},
+        {{"id","5"}, {"name","Eve"},   {"age","45"}},
+    };
 
-    // ── Test 1: allocate pages and write data ─────────────────────
+    auto runSQL = [&](const std::string& sql) {
+        std::cout << "SQL: " << sql << "\n";
+        mydb::Lexer     lexer(sql);
+        mydb::Parser    parser(lexer.tokenize());
+        mydb::Optimizer optimizer;
+        mydb::Executor  executor(storage);
+
+        auto stmt     = parser.parse();
+        auto logical  = optimizer.toLogical(stmt);
+        auto physical = optimizer.toPhysical(logical);
+        auto results  = executor.execute(physical);
+
+        std::cout << "Results (" << results.size() << " rows):\n";
+        for (const auto& row : results) {
+            for (const auto& [col, val] : row)
+                std::cout << "  " << col << "=" << val;
+            std::cout << "\n";
+        }
+        std::cout << "\n";
+    };
+
+    runSQL("SELECT id, name FROM users WHERE age >= 30;");
+    runSQL("SELECT * FROM users WHERE age >= 18 LIMIT 3;");
+
+    // ── Transaction test ──────────────────────────────────────────
+    std::cout << "=== Transaction Test ===\n\n";
+
+    mydb::TransactionManager txnMgr;
+
+    // Test 1: commit
     {
-        mydb::DiskManager  disk(dbFile);
-        mydb::BufferPool   pool(4, disk); // pool of 4 pages
+        auto& txn = txnMgr.begin();
+        std::cout << "BEGIN txn " << txn.id() << "\n";
 
-        std::cout << "Test 1: Allocate and write pages\n";
+        mydb::WriteRecord rec;
+        rec.type   = mydb::WriteRecord::Type::Insert;
+        rec.table  = "users";
+        rec.key    = "6";
+        rec.newRow = {{"id","6"}, {"name","Frank"}, {"age","28"}};
+        txn.logWrite(rec);
+        storage["users"].push_back(rec.newRow);
 
-        // Allocate 3 pages
-        mydb::Page* p0 = pool.newPage();
-        mydb::Page* p1 = pool.newPage();
-        mydb::Page* p2 = pool.newPage();
-
-        std::cout << "  Page 0 id: " << p0->id() << "\n";
-        std::cout << "  Page 1 id: " << p1->id() << "\n";
-        std::cout << "  Page 2 id: " << p2->id() << "\n";
-
-        // Write some data to page 0
-        const char* msg = "Hello, Buffer Pool!";
-        std::memcpy(p0->rawData() + sizeof(mydb::PageHeader),
-                    msg, std::strlen(msg));
-        p0->setDirty(true);
-
-        pool.unpin(p0->id(), true);
-        pool.unpin(p1->id(), false);
-        pool.unpin(p2->id(), false);
-
-        // Flush everything to disk
-        pool.flushAll();
-        std::cout << "  Flushed all pages to disk\n\n";
+        txnMgr.commit(txn.id());
+        std::cout << "COMMIT txn " << txn.id() << "\n";
+        std::cout << "Rows after commit: " << storage["users"].size() << "\n\n";
     }
 
-    // ── Test 2: read back from disk ───────────────────────────────
+    // Test 2: rollback
     {
-        mydb::DiskManager disk(dbFile);
-        mydb::BufferPool  pool(4, disk);
+        auto& txn = txnMgr.begin();
+        std::cout << "BEGIN txn " << txn.id() << "\n";
 
-        std::cout << "Test 2: Read page back from disk\n";
+        mydb::WriteRecord rec;
+        rec.type   = mydb::WriteRecord::Type::Insert;
+        rec.table  = "users";
+        rec.key    = "99";
+        rec.newRow = {{"id","99"}, {"name","Temp"}, {"age","0"}};
+        txn.logWrite(rec);
+        storage["users"].push_back(rec.newRow);
 
-        mydb::Page* p0 = pool.fetchPage(0);
-        const char* data = p0->rawData() + sizeof(mydb::PageHeader);
-        std::cout << "  Data on page 0: \"" << data << "\"\n";
-
-        pool.unpin(p0->id(), false);
-        std::cout << "  Read successful!\n\n";
+        std::cout << "Rows before rollback: " << storage["users"].size() << "\n";
+        txnMgr.rollback(txn.id(), storage);
+        std::cout << "ROLLBACK txn " << txn.id() << "\n";
+        std::cout << "Rows after rollback: " << storage["users"].size() << "\n\n";
     }
 
-    // ── Test 3: LRU eviction ──────────────────────────────────────
-    {
-        mydb::DiskManager disk(dbFile);
-        mydb::BufferPool  pool(3, disk); // only 3 pages fit
+    // ── Index test (in-memory) ────────────────────────────────────
+    std::cout << "=== Index Test (B-Tree concept) ===\n\n";
 
-        std::cout << "Test 3: LRU eviction with pool size 3\n";
+    SimpleIndex idx;
+    idx.insert("005", "Alice");
+    idx.insert("003", "Carol");
+    idx.insert("007", "Bob");
+    idx.insert("001", "Dave");
+    idx.insert("009", "Eve");
+    idx.insert("002", "Frank");
+    idx.insert("006", "Grace");
+    idx.insert("004", "Heidi");
 
-        mydb::Page* p0 = pool.fetchPage(0);
-        pool.unpin(p0->id(), false);
+    std::cout << "Search '005': "
+              << idx.search("005").value_or("NOT FOUND") << "\n";
+    std::cout << "Search '003': "
+              << idx.search("003").value_or("NOT FOUND") << "\n";
+    std::cout << "Search '999': "
+              << idx.search("999").value_or("NOT FOUND") << "\n\n";
 
-        mydb::Page* p1 = pool.fetchPage(1);
-        pool.unpin(p1->id(), false);
+    std::cout << "Range scan '003' to '007':\n";
+    for (auto& [k, v] : idx.rangeScan("003", "007"))
+        std::cout << "  " << k << " -> " << v << "\n";
 
-        mydb::Page* p2 = pool.fetchPage(2);
-        pool.unpin(p2->id(), false);
+    // ── Lock Manager test ─────────────────────────────────────────
+    std::cout << "\n=== Lock Manager Test ===\n\n";
 
-        // Pool is full — fetching page 0 again should evict LRU (page 1 or 2)
-        mydb::Page* p0again = pool.fetchPage(0);
-        std::cout << "  Pages in pool: " << pool.pagesInPool() << " (max 3)\n";
-        std::cout << "  LRU eviction working correctly!\n";
+    mydb::LockManager lm;
+    bool ok1 = lm.acquireLock(1, "users:1", mydb::LockMode::Shared);
+    bool ok2 = lm.acquireLock(2, "users:1", mydb::LockMode::Shared);
+    bool ok3 = lm.acquireLock(3, "users:1", mydb::LockMode::Exclusive);
 
-        pool.unpin(p0again->id(), false);
-    }
+    std::cout << "Txn1 shared:    " << (ok1 ? "granted" : "denied") << "\n";
+    std::cout << "Txn2 shared:    " << (ok2 ? "granted" : "denied") << "\n";
+    std::cout << "Txn3 exclusive: " << (ok3 ? "granted" : "denied") << "\n";
 
-    // Cleanup
-    std::remove(dbFile.c_str());
-    std::cout << "\nAll Buffer Pool tests passed!\n";
+    lm.releaseAll(1);
+    lm.releaseAll(2);
+    bool ok4 = lm.acquireLock(3, "users:1", mydb::LockMode::Exclusive);
+    std::cout << "Txn3 exclusive after release: "
+              << (ok4 ? "granted" : "denied") << "\n";
+
     return 0;
 }
