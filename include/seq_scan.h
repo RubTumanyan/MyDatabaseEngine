@@ -26,4 +26,4 @@ namespace mydb {
         size_t                  cursor_;
     };
 
-} // namespace mydbnamespace mydb
+} // namespace mydb

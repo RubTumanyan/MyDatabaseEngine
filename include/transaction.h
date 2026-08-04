@@ -44,4 +44,4 @@ namespace mydb {
         std::vector<WriteRecord> writeLog_;
     };
 
-} // namespace mydb} // namespace mydb
+} // namespace mydb

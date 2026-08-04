@@ -27,4 +27,4 @@ namespace mydb {
         mutable std::mutex mutex_;
     };
 
-} // namespace mydb} // namespace mydb
+} // namespace mydb
