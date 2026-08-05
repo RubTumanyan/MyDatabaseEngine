@@ -114,6 +114,17 @@ PhysicalPlanRef Optimizer::buildPhysical(const LogicalPlanRef& node) {
             return out;
         }
 
+        case LogicalNodeType::Join: {
+            auto* n = static_cast<LogicalJoin*>(node.get());
+            auto left  = buildPhysical(node->children[0]);
+            auto right = buildPhysical(node->children[1]);
+            auto out = std::make_shared<PhysicalHashJoin>(
+                n->leftKey, n->rightKey);
+            out->children.push_back(left);
+            out->children.push_back(right);
+            return out;
+        }
+
         default:
             throw std::runtime_error("Optimizer: unknown node type");
     }

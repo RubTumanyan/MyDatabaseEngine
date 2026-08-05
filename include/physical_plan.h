@@ -56,6 +56,14 @@ namespace mydb {
             : PhysicalNode(PhysicalNodeType::Limit), count(n) {}
     };
 
+    struct PhysicalHashJoin : PhysicalNode {
+        std::string buildKey;
+        std::string probeKey;
+        explicit PhysicalHashJoin(std::string bk, std::string pk)
+            : PhysicalNode(PhysicalNodeType::HashJoin),
+              buildKey(std::move(bk)), probeKey(std::move(pk)) {}
+    };
+
     using PhysicalPlanRef = std::shared_ptr<PhysicalNode>;
 
 } // namespace mydb

@@ -29,6 +29,7 @@ add_library(mydb_engine
         src/lock_manager.cpp
         src/buffer_pool.cpp
         src/table_heap.cpp
+        src/hash_join.cpp
         src/btree.cpp
         src/wal.cpp
         src/disk_manager.cpp

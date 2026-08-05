@@ -1,28 +1,45 @@
 #pragma once
 #include "operator.h"
 #include "physical_plan.h"
+#include "mvcc.h"
+#include "wal.h"
+#include "ast.h"
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <memory>
 
 namespace mydb {
 
-    // Simple in-memory table storage — will be replaced by Buffer Pool in Step 6
     using TableStorage = std::unordered_map<std::string, std::vector<Row>>;
 
-    // Executor walks the physical plan tree and builds an operator pipeline.
-    // Then drives the pipeline by calling next() until exhausted.
+    class Transaction;
+
     class Executor {
     public:
         explicit Executor(TableStorage& storage) : storage_(storage) {}
+        Executor(TableStorage& storage, WAL* wal)
+            : storage_(storage), wal_(wal) {}
 
-        // Execute a physical plan — returns all result rows
         std::vector<Row> execute(const PhysicalPlanRef& plan);
 
-    private:
-        TableStorage& storage_;
+        void executeInsert(const InsertStatement& stmt,
+                           Transaction* txn = nullptr);
+        void executeUpdate(const UpdateStatement& stmt,
+                           Transaction* txn = nullptr);
+        void executeDelete(const DeleteStatement& stmt,
+                           Transaction* txn = nullptr);
+        void executeCreateTable(const CreateTableStatement& stmt);
 
-        // Recursively build operator tree from physical plan
+        void setSnapshot(std::shared_ptr<MvccSnapshot> snap) {
+            snapshot_ = std::move(snap);
+        }
+
+    private:
+        TableStorage&                storage_;
+        WAL*                         wal_ = nullptr;
+        std::shared_ptr<MvccSnapshot> snapshot_;
+
         OperatorRef build(const PhysicalPlanRef& node);
     };
 

@@ -53,18 +53,17 @@ public:
 
     LSN nextLSN() const { return nextLsn_; }
 
+    // Simple row serialization: "col1=val1;col2=val2"
+    static std::string serializeRow(const Row& row);
+    static Row         deserializeRow(const std::string& s);
+
 private:
     std::string  filename_;
     std::fstream file_;
     LSN          nextLsn_ = 1;
 
-    // Serialize/deserialize a LogRecord to/from binary
-    void        writeRecord(const LogRecord& rec);
-    bool        readRecord(LogRecord& rec);
-
-    // Simple row serialization: "col1=val1;col2=val2"
-    static std::string serializeRow(const Row& row);
-    static Row         deserializeRow(const std::string& s);
+    void writeRecord(const LogRecord& rec);
+    bool readRecord(LogRecord& rec);
 };
 
 } // namespace mydb

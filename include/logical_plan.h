@@ -60,6 +60,14 @@ namespace mydb {
             : LogicalNode(LogicalNodeType::Limit), count(n) {}
     };
 
+    struct LogicalJoin : LogicalNode {
+        std::string leftKey;
+        std::string rightKey;
+        explicit LogicalJoin(std::string lk, std::string rk)
+            : LogicalNode(LogicalNodeType::Join),
+              leftKey(std::move(lk)), rightKey(std::move(rk)) {}
+    };
+
     using LogicalPlanRef = std::shared_ptr<LogicalNode>;
 
 } // namespace mydb
